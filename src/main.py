@@ -222,4 +222,4 @@ while True:
     guardar_datos_json(archivo_datos, contenido_datos)
 
     logging.info(f"Ejecución completada para {len(ciudades)} ciudades. Próxima ejecución en 30 minutos.")
-    time.sleep(1700)
+    time.sleep(1800)
