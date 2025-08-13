@@ -3,226 +3,223 @@ from datetime import datetime
 import random
 import json
 import os
+import time
+import logging
 
-ciudades = [
-    {"nombre": "Nueva York", "lat": 40.7128, "lon": -74.0060, "moneda": "USD", "timezone": "America/New_York"},
-    {"nombre": "Londres", "lat": 51.5074, "lon": -0.1278, "moneda": "GBP", "timezone": "Europe/London"},
-    {"nombre": "Tokio", "lat": 35.6762, "lon": 139.6503, "moneda": "JPY", "timezone": "Asia/Tokyo"},
-    {"nombre": "São Paulo", "lat": -23.5505, "lon": -46.6333, "moneda": "BRL", "timezone": "America/Sao_Paulo"},
-    {"nombre": "Sídney", "lat": -33.8688, "lon": 151.2093, "moneda": "AUD", "timezone": "Australia/Sydney"}
-]
+# ---------------- Configuración Logging ----------------
+os.makedirs("logs", exist_ok=True)
+logging.basicConfig(
+    filename="logs/monitoreo.log",
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 
-fecha_ejecucion_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# ---------------- Función de API con reintentos ----------------
+def fetch_api(url, max_retries=3, timeout=20):
+    for intento in range(1, max_retries + 1):
+        try:
+            response = requests.get(url, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"Intento {intento} fallido para {url}: {e}")
+            if intento == max_retries:
+                logging.error(f"No se pudo obtener datos de {url} después de {max_retries} intentos")
+                return None
+            time.sleep(2)
 
-archivo_alertas = os.path.join("data", "alertas.json")
-archivo_datos = os.path.join("data", "datos_ciudades.json")
+# ---------------- Funciones para guardar datos ----------------
+def guardar_datos_json(nombre_archivo, datos):
+    with open(nombre_archivo, "w", encoding="utf-8") as f:
+        json.dump(datos, f, ensure_ascii=False, indent=2)
 
-os.makedirs("data", exist_ok=True)
+# --------------------------------------------------------------
+while True:
+    with open("config/config.json", "r", encoding="utf-8") as f:
+        config = json.load(f)
 
-if os.path.exists(archivo_alertas):
-    with open(archivo_alertas, "r", encoding="utf-8") as f:
-        contenido_alertas = json.load(f)
-else:
-    contenido_alertas = []
+    ciudades = config.get("ciudades", [])
 
-contenido_datos = []
+    fecha_ejecucion_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-for ciudad in ciudades:
-    print(f"\n==================== {ciudad['nombre']} ====================")
-    # ---------- API Clima (Open-Meteo) ----------
-    url = (
-        f"https://api.open-meteo.com/v1/forecast"
-        f"?latitude={ciudad['lat']}&longitude={ciudad['lon']}"
-        f"&daily=temperature_2m_max"
-        f"&current=precipitation_probability,uv_index,temperature_2m,wind_speed_10m"
-        f"&timezone=auto"
-    )
+    os.makedirs("data", exist_ok=True)
+    archivo_alertas = "data/alertas.json"
+    archivo_datos = "data/datos_ciudades.json"
 
-    response = requests.get(url)
+    if os.path.exists(archivo_alertas):
+        with open(archivo_alertas, "r", encoding="utf-8") as f:
+            try:
+                contenido_alertas = json.load(f)
+            except json.JSONDecodeError:
+                contenido_alertas = []
+    else:
+        contenido_alertas = []
 
-    if response.status_code == 200:
-        data = response.json()
-        
-        current = data["current"] # Datos actuales
+    contenido_datos = []
+
+    for ciudad in ciudades:
+        logging.info(f"Procesando ciudad: {ciudad['nombre']}")
+
+        # ---------- API Clima ----------
+        url_clima = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={ciudad['lat']}&longitude={ciudad['lon']}"
+            f"&daily=temperature_2m_max"
+            f"&current=precipitation_probability,uv_index,temperature_2m,wind_speed_10m"
+            f"&timezone=auto"
+        )
+        data_clima = fetch_api(url_clima)
+
+        current = data_clima.get("current", {}) if data_clima else {}
         temp_actual = current.get("temperature_2m")
         viento = current.get("wind_speed_10m")
         prob_lluvia = current.get("precipitation_probability")
         uv_actual = current.get("uv_index")
 
-        daily = data["daily"] # Pronóstico diario (7 días)
         pronostico = []
-        for i in range(len(daily["time"])):
-            pronostico.append({
-                "fecha": daily["time"][i],
-                "temp_max": daily["temperature_2m_max"][i]
+        if data_clima:
+            daily = data_clima.get("daily", {})
+            fechas = daily.get("time", [])
+            temps = daily.get("temperature_2m_max", [])
+            for i in range(len(fechas)):
+                temp_max = temps[i] if i < len(temps) else None
+                pronostico.append({"fecha": fechas[i], "temp_max": temp_max})
+
+        # ---------- API Tasas de Cambio ----------
+        url_cambio = f"https://api.exchangerate-api.com/v4/latest/{ciudad['moneda']}"
+        data_cambio = fetch_api(url_cambio)
+
+        rates = data_cambio.get("rates", {}) if data_cambio else {}
+        tasa_actual = rates.get("COP")
+        historico = []
+        if tasa_actual:
+            for _ in range(5):
+                variacion = random.uniform(-0.02, 0.02)
+                historico.append(round(tasa_actual * (1 + variacion), 2))
+
+        # ---------- API Zonas Horarias ----------
+        url_tz = f"https://timeapi.io/api/TimeZone/zone?timeZone={ciudad['timezone']}"
+        data_tz = fetch_api(url_tz)
+
+        hora_local = data_tz.get("currentLocalTime") if data_tz else None
+        offset_ciudad = data_tz.get("currentUtcOffset", {}).get("seconds", 0) if data_tz else 0
+
+        data_bogota = fetch_api("https://timeapi.io/api/TimeZone/zone?timeZone=America/Bogota")
+        offset_bogota = data_bogota.get("currentUtcOffset", {}).get("seconds", 0) if data_bogota else 0
+
+        dif_horas = (offset_ciudad - offset_bogota) / 3600
+        if dif_horas > 0:
+            dif_horaria = f"{abs(dif_horas)} horas adelante"
+        elif dif_horas < 0:
+            dif_horaria = f"{abs(dif_horas)} horas atrás"
+        else:
+            dif_horaria = "Misma hora"
+
+        # ---------- Reglas de negocio y alertas ----------
+        alertas_clima = []
+        if temp_actual is not None:
+            if temp_actual > 35 or temp_actual < 0:
+                alertas_clima.append("Temperatura crítica")
+        if prob_lluvia and prob_lluvia > 70:
+            alertas_clima.append("Alta probabilidad de lluvia")
+        if viento and viento > 50:
+            alertas_clima.append("Vientos fuertes")
+
+        alertas_cambio = []
+        if tasa_actual and historico:
+            variacion_dia_anterior = ((tasa_actual - historico[-1]) / historico[-1]) * 100
+            if abs(variacion_dia_anterior) > 3:
+                alertas_cambio.append("Variación > 3% respecto al día anterior")
+            # Tendencia negativa últimos 3 días
+            if len(historico) >= 3:
+                if historico[-3] > historico[-2] > historico[-1]:
+                    alertas_cambio.append("Tendencia negativa 3 días consecutivos")
+
+        # Calculo de scores
+        clima_score = max(0, 100 - len(alertas_clima)*25)
+        cambio_score = 100 if not alertas_cambio else 50
+        if uv_actual is None:
+            uv_score = 50
+        elif uv_actual < 6:
+            uv_score = 100
+        elif 6 <= uv_actual <= 8:
+            uv_score = 75
+        else:
+            uv_score = 50
+
+        ivv = round((clima_score*0.4)+(cambio_score*0.3)+(uv_score*0.3),1)
+        if ivv >= 80:
+            nivel_riesgo = "BAJO"; color = "#28a745"
+        elif ivv >= 60:
+            nivel_riesgo = "MEDIO"; color = "#ffc107"
+        elif ivv >= 40:
+            nivel_riesgo = "ALTO"; color = "#fd7e14"
+        else:
+            nivel_riesgo = "CRITICO"; color = "#dc3545"
+
+        def prioridad_alertas(alertas, tipo):
+            if tipo=="climática":
+                if len(alertas)==1: return "BAJA"
+                elif len(alertas)==2: return "MEDIA"
+                elif len(alertas)>=3: return "ALTA"
+            if tipo=="cambio":
+                if len(alertas)==1: return "MEDIA"
+                elif len(alertas)>=2: return "ALTA"
+            return None
+
+        for alerta in alertas_clima:
+            contenido_alertas.append({
+                "fecha_ejecucion": fecha_ejecucion_actual,
+                "ciudad": ciudad["nombre"],
+                "tipo_alerta": "climática",
+                "categoria": "temperatura" if "temperatura" in alerta.lower() else "lluvia" if "lluvia" in alerta.lower() else "viento",
+                "descripcion": alerta,
+                "prioridad": prioridad_alertas(alertas_clima, "climática")
             })
 
-# ---------- API Tasas de Cambio ----------
-    url = (f"https://api.exchangerate-api.com/v4/latest/{ciudad['moneda']}")
-    response = requests.get(url)
+        for alerta in alertas_cambio:
+            contenido_alertas.append({
+                "fecha_ejecucion": fecha_ejecucion_actual,
+                "ciudad": ciudad["nombre"],
+                "tipo_alerta": "cambio",
+                "categoria": "variacion" if "variación" in alerta.lower() else "tendencia",
+                "descripcion": alerta,
+                "prioridad": prioridad_alertas(alertas_cambio, "cambio")
+            })
 
-    if response.status_code == 200:
-        data = response.json()
-        current = data["rates"]
-        tasa_actual = current.get("COP")
-
-        # Histórico últimos 5 días con variación ±2%
-        historico = []
-        for _ in range(5):
-            variacion = random.uniform(-0.02, 0.02)  # ±2%
-            historico.append(round(tasa_actual * (1 + variacion), 2))
-
-# ---------- API Zonas Horarias ----------
-    url = (
-        f"https://timeapi.io/api/TimeZone/zone"
-        f"?timeZone={ciudad['timezone']}"
-        )
-
-    response = requests.get(url)
-
-    if response.status_code == 200:
-        data_ciudad = response.json()
-
-        hora_local = data_ciudad["currentLocalTime"]
-        offset_ciudad = data_ciudad["currentUtcOffset"]["seconds"]
-
-        # Obtener Bogotá
-        url_bogota = "https://timeapi.io/api/TimeZone/zone?timeZone=America/Bogota"
-        resp_bogota = requests.get(url_bogota)
-        if resp_bogota.status_code == 200:
-            offset_bogota = resp_bogota.json()["currentUtcOffset"]["seconds"]
-
-            dif_horas = (offset_ciudad - offset_bogota) / 3600  # Calcular diferencia en horas (seg a hrs)
-
-            if dif_horas > 0:
-                dif_horaria = f"{abs(dif_horas)} horas adelante"
-            elif dif_horas < 0:
-                dif_horaria = f"{abs(dif_horas)} horas atrás"
-            else:
-                dif_horaria = "Misma hora"
-
-# ---------- Reglas de negocio ----------
-    alertas_clima = [] # ---------- Sistema de alertas climáticas ----------
-
-    if temp_actual > 35 or temp_actual < 0:
-        alertas_clima.append("Temperatura crítica")
-    if prob_lluvia > 70:
-        alertas_clima.append("Alta probabilidad de lluvia")
-    if viento > 50:
-        alertas_clima.append("Vientos fuertes")
-
-    clima_score = 100 - (len(alertas_clima) * 25) # Clima_Score = 100 - (alertas_climaticas * 25)
-    if clima_score < 0:
-        clima_score = 0
-
-    alertas_cambio = [] # ---------- Sistema de alertas de tipo de cambio ----------
-
-    variacion_dia_anterior = ((tasa_actual - historico[-1]) / historico[-1]) * 100 # ((Valor Final - Valor Inicial) / Valor Inicial) * 100
-
-    if abs(variacion_dia_anterior) > 3:
-        alertas_cambio.append("Variación > 3% respecto al día anterior")
-
-    inicio = len(historico) - 3 # Tendencia negativa 3 días consecutivos
-    fin = len(historico) - 1
-    comparaciones = []
-
-    for i in range(inicio, fin):
-        es_descenso = historico[i] > historico[i + 1]
-        comparaciones.append(es_descenso)
-
-    tendencia_negativa = all(comparaciones) # Si todas son True, hay tendencia negativa
-
-    if tendencia_negativa:
-        alertas_cambio.append("Tendencia negativa 3 días consecutivos")
-
-
-    if not alertas_cambio: # Cambio_Score = 100 si estable, 50 si volátil 
-        cambio_score = 100
-    else:
-        cambio_score = 50
-
-    if uv_actual < 6: # UV_Score = 100 si UV < 6, 75 si UV 6-8, 50 si UV > 8
-        uv_score = 100
-    elif 6 <= uv_actual <= 8:
-        uv_score = 75
-    else:
-        uv_score = 50
-
-    ivv = round((clima_score * 0.4) + (cambio_score * 0.3) + (uv_score * 0.3), 1) # IVV
-
-    if ivv >= 80: # Color y nivel de riesgo
-        nivel_riesgo = "BAJO"
-        color = "#28a745"
-    elif ivv >= 60:
-        nivel_riesgo = "MEDIO"
-        color = "#ffc107"
-    elif ivv >= 40:
-        nivel_riesgo = "ALTO"
-        color = "#fd7e14"
-    else:
-        nivel_riesgo = "CRITICO"
-        color = "#dc3545"
-
-# ---------------- Guardar alertas ----------------
-    if len(alertas_clima) == 1: # Alertas climáticas
-        prioridad_clima = "BAJA"
-    elif len(alertas_clima) == 2:
-        prioridad_clima = "MEDIA"
-    elif len(alertas_clima) >= 3:
-        prioridad_clima = "ALTA"
-    else:
-        prioridad_clima = None
-
-    for alerta in alertas_clima: # Guardar alertas climáticas
-        contenido_alertas.append({
+        # ---------------- Guardar datos generales ----------------
+        contenido_datos.append({
             "fecha_ejecucion": fecha_ejecucion_actual,
             "ciudad": ciudad["nombre"],
-            "tipo_alerta": "climática",
-            "categoria": "temperatura" if "temperatura" in alerta.lower() else "lluvia" if "lluvia" in alerta.lower() else "viento",
-            "descripcion": alerta,
-            "prioridad": prioridad_clima
+            "lat": ciudad.get("lat"),
+            "lon": ciudad.get("lon"),
+            "temp_actual": temp_actual,
+            "viento_kmh": viento,
+            "prob_lluvia": prob_lluvia,
+            "uv_actual": uv_actual,
+            "tasa_actual": tasa_actual,
+            "historico_tasa_cambio": historico,
+            "pronostico_7dias": pronostico,
+            "hora_local": hora_local,
+            "dif_horaria": dif_horaria,
+            "ivv": ivv,
+            "nivel_riesgo": nivel_riesgo,
+            "color_riesgo": color
         })
 
-    if len(alertas_cambio) == 1: # Alertas de tasa de cambio
-        prioridad_cambio = "MEDIA"
-    elif len(alertas_cambio) >= 2:
-        prioridad_cambio = "ALTA"
-    else:
-        prioridad_cambio = None
-
-    for alerta in alertas_cambio: # Guardar alertas tasa de cambio
+    if not contenido_alertas:
         contenido_alertas.append({
             "fecha_ejecucion": fecha_ejecucion_actual,
-            "ciudad": ciudad["nombre"],
-            "tipo_alerta": "cambio",
-            "categoria": "variacion" if "variación" in alerta.lower() else "tendencia",
-            "descripcion": alerta,
-            "prioridad": prioridad_cambio
+            "ciudad": "N/A",
+            "tipo_alerta": "Ninguna",
+            "descripcion": "Sin alertas",
+            "prioridad": None
         })
 
-# ---------------- Guardar datos generales ----------------
-    contenido_datos.append({
-        "fecha_ejecucion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "ciudad": ciudad["nombre"],
-        "lat": ciudad["lat"],
-        "lon": ciudad["lon"],
-        "temp_actual": temp_actual,
-        "viento_kmh": viento,
-        "prob_lluvia": prob_lluvia,
-        "uv_actual": uv_actual,
-        "tasa_actual": tasa_actual,
-        "historico_tasa_cambio": historico,
-        "pronostico_7dias": pronostico,
-        "ivv": ivv,
-        "nivel_riesgo": nivel_riesgo,
-        "color_riesgo": color
-    })
+    # Guardar en JSON
+    guardar_datos_json(archivo_alertas, contenido_alertas)
+    guardar_datos_json(archivo_datos, contenido_datos)
 
-# ---------------- Guardar en JSON ----------------
-with open(archivo_alertas, "w", encoding="utf-8") as f:
-    json.dump(contenido_alertas, f, ensure_ascii=False, indent=2)
-
-with open(archivo_datos, "w", encoding="utf-8") as f:
-    json.dump(contenido_datos, f, ensure_ascii=False, indent=2)
-
-print(f"\n✅ Datos y alertas guardados para {len(ciudades)} ciudades")
+    logging.info(f"Ejecución completada para {len(ciudades)} ciudades. Próxima ejecución en 30 minutos.")
+    time.sleep(300)

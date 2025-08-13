@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 *.log
+alertas.json
+datos_ciudades.json
