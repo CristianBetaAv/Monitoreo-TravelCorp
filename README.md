@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Monitoreo de Clima, Tasas de Cambio y Zonas Horarias
 
 ## 📌 Arquitectura de la Solución
@@ -175,6 +174,7 @@ El proyecto incluye un dashboard (`dashboard/monitoreo-travelcorp.pbix`) que con
 ## Panel de Alertas
 - Tabla/lista con alertas activas, prioridad y descripción.
 - Histórico filtrado por las últimas 24 horas.
+
 
 =======
 # Monitoreo de Clima, Tasas de Cambio y Zonas Horarias
@@ -355,4 +355,3 @@ El proyecto incluye un dashboard (`dashboard/monitoreo-travelcorp.pbix`) que con
 ## Panel de Alertas
 - Tabla/lista con alertas activas, prioridad y descripción.
 - Histórico filtrado por las últimas 24 horas.
->>>>>>> c4b305a (Nuevas funcionalidades y archivos)
