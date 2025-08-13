@@ -39,7 +39,7 @@ README.md
 - **Python 3.10** o superior
 - Librerías necesarias:
 ```bash
-pip install requests
+pip install -r requirements.txt
 ```
 
 ### 2️⃣ Clonar el repositorio
@@ -174,3 +174,4 @@ El proyecto incluye un dashboard (`dashboard/monitoreo-travelcorp.pbix`) que con
 ## Panel de Alertas
 - Tabla/lista con alertas activas, prioridad y descripción.
 - Histórico filtrado por las últimas 24 horas.
+
