@@ -31,7 +31,7 @@ README.md
 ```
 
 ## 🗂 Diagrama de Flujo del Proceso
-*(Aquí irá el diagrama de flujo en el futuro)*
+<img width="800" height="1000" alt="Untitled diagram _ Mermaid Chart-2025-08-14-001019" src="https://github.com/user-attachments/assets/578282bb-fb5b-40ad-ab44-89ffec927e08" />
 
 ## ⚙️ Instrucciones de Instalación y Ejecución
 
@@ -174,3 +174,4 @@ El proyecto incluye un dashboard (`dashboard/monitoreo-travelcorp.pbix`) que con
 ## Panel de Alertas
 - Tabla/lista con alertas activas, prioridad y descripción.
 - Histórico filtrado por las últimas 24 horas.
+
